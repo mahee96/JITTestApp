@@ -50,6 +50,8 @@
 	<string>Used strictly for background process persistence.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>Used strictly for background process persistence.</string>
+	<key>NSLocationAlwaysUsageDescription</key>
+	<string>Used strictly for background process persistence.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

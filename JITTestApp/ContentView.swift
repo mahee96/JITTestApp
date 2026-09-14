@@ -12,26 +12,54 @@ import CoreLocation
 final class BackgroundLocationManager: NSObject, CLLocationManagerDelegate {
     static let shared = BackgroundLocationManager()
     private let manager = CLLocationManager()
+    private var isRunning = false
 
     override private init() {
         super.init()
         manager.delegate = self
-        // Lowest possible power: coarse location based on cell tower
-        // GPS isn't used
-        manager.desiredAccuracy = kCLLocationAccuracyThreeKilometers
-        manager.distanceFilter = 999999
-        manager.allowsBackgroundLocationUpdates = true
-        manager.pausesLocationUpdatesAutomatically = false
-        manager.showsBackgroundLocationIndicator = false
     }
 
     func start() {
-        manager.requestWhenInUseAuthorization()
+        let status = manager.authorizationStatus
+        if status == .notDetermined {
+            manager.requestAlwaysAuthorization()
+        } else if status == .authorizedWhenInUse {
+            manager.requestAlwaysAuthorization()
+            runLocationService()
+        } else if status == .authorizedAlways {
+            runLocationService()
+        }
+    }
+
+    private func runLocationService() {
+        guard !isRunning else { return }
+        let status = manager.authorizationStatus
+        guard status == .authorizedAlways || status == .authorizedWhenInUse else { return }
+
+        manager.desiredAccuracy = kCLLocationAccuracyThreeKilometers
+        manager.distanceFilter = 4
+        manager.allowsBackgroundLocationUpdates = true
+        manager.pausesLocationUpdatesAutomatically = false
+        manager.showsBackgroundLocationIndicator = false
         manager.startUpdatingLocation()
+        isRunning = true
+    }
+
+    func stop() {
+        manager.stopUpdatingLocation()
+        isRunning = false
+    }
+
+    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        let status = manager.authorizationStatus
+        guard status != .notDetermined else { return }
+        if status == .authorizedAlways || status == .authorizedWhenInUse {
+            runLocationService()
+        }
     }
 
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
-        // Discard all coordinates; service existence alone keeps process execution alive
+        // Coarse location updates keep process active; coordinates discarded
     }
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
