@@ -7,22 +7,24 @@ SCHEME="JITTestApp"
 CONFIGURATION="Release"
 OUTPUT_IPA="JITTestApp.ipa"
 ENTITLEMENTS="JITTestApp/JITTestApp.entitlements"
+CODESIGN_CONFIG="CodeSigning.xcconfig"
 DO_CLEAN=false
 DO_FAKESIGN=true
 BUILD_DIR="build"
 
 usage() {
     cat << HELP
-Usage: $(basename "\$0") [options]
+Usage: $(basename "$0") [options]
 
 Options:
-  -s, --scheme <name>          Xcode scheme to build (default: JITTestApp)
-  -c, --configuration <config> Build configuration: Debug or Release (default: Release)
-  -o, --output <file.ipa>      Output IPA filename/path (default: JITTestApp.ipa)
-  -e, --entitlements <path>    Path to entitlements file (default: JITTestApp/JITTestApp.entitlements)
-      --clean                  Clean build artifacts before building
-      --no-fakesign            Skip ad-hoc/fake-signing with entitlements
-  -h, --help                   Display this help message
+  -s, --scheme <name>             Xcode scheme to build (default: JITTestApp)
+  -c, --configuration <config>    Build configuration: Debug or Release (default: Release)
+  -o, --output <file.ipa>         Output IPA filename/path (default: JITTestApp.ipa)
+  -e, --entitlements <path>       Path to entitlements file (default: JITTestApp/JITTestApp.entitlements)
+      --codesign-config <path>    Path to CodeSigning.xcconfig (default: CodeSigning.xcconfig)
+      --clean                     Clean build artifacts before building
+      --no-fakesign               Skip ad-hoc/fake-signing with entitlements
+  -h, --help                      Display this help message
 
 Examples:
   ./build.sh
@@ -49,6 +51,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         -e|--entitlements)
             ENTITLEMENTS="$2"
+            shift 2
+            ;;
+        --codesign-config)
+            CODESIGN_CONFIG="$2"
             shift 2
             ;;
         --clean)
@@ -82,6 +88,22 @@ fi
 
 mkdir -p "$BUILD_DIR"
 
+if [ -f "$CODESIGN_CONFIG" ]; then
+    echo "==> Found $CODESIGN_CONFIG: using code signing settings from xcconfig."
+    SIGNING_FLAGS=(
+        CODE_SIGNING_ALLOWED=YES
+    )
+    DO_FAKESIGN=false
+else
+    echo "==> $CODESIGN_CONFIG not found: building with CODE_SIGNING_ALLOWED=NO."
+    SIGNING_FLAGS=(
+        CODE_SIGNING_ALLOWED=NO
+        CODE_SIGNING_REQUIRED=NO
+        CODE_SIGN_IDENTITY=""
+        AD_HOC_CODE_SIGNING_ALLOWED=YES
+    )
+fi
+
 echo "==> Archiving $SCHEME ($CONFIGURATION)..."
 if command -v xcbeautify >/dev/null 2>&1; then
     xcodebuild archive \
@@ -90,10 +112,7 @@ if command -v xcbeautify >/dev/null 2>&1; then
         -configuration "$CONFIGURATION" \
         -archivePath "$ARCHIVE_PATH" \
         -sdk iphoneos \
-        CODE_SIGNING_ALLOWED=NO \
-        CODE_SIGNING_REQUIRED=NO \
-        CODE_SIGN_IDENTITY="" \
-        AD_HOC_CODE_SIGNING_ALLOWED=YES | xcbeautify
+        "${SIGNING_FLAGS[@]}" | xcbeautify
 else
     xcodebuild archive \
         -project "$SCHEME.xcodeproj" \
@@ -101,10 +120,7 @@ else
         -configuration "$CONFIGURATION" \
         -archivePath "$ARCHIVE_PATH" \
         -sdk iphoneos \
-        CODE_SIGNING_ALLOWED=NO \
-        CODE_SIGNING_REQUIRED=NO \
-        CODE_SIGN_IDENTITY="" \
-        AD_HOC_CODE_SIGNING_ALLOWED=YES
+        "${SIGNING_FLAGS[@]}"
 fi
 
 if [ ! -d "$APP_PATH" ]; then

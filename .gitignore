@@ -9,3 +9,4 @@ build/
 **/*.xcarchive/
 *.xcarchive/
 *.ipa
+*.zip
