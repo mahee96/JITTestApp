@@ -1,0 +1,32 @@
+// Configuration settings file format documentation can be found at:
+// https://help.apple.com/xcode/#/dev745c5c974
+
+MARKETING_VERSION = 1.0.0
+CURRENT_PROJECT_VERSION = 1
+
+// Vars to be overwritten by `CodeSigning.xcconfig` if exists
+DEVELOPMENT_TEAM = 
+ORG_IDENTIFIER = org.example
+
+CODE_SIGN_STYLE = Automatic
+
+PROVISIONING_PROFILE_SPECIFIER =
+
+// Codesigning settings defined optionally, see `CodeSigning.xcconfig.sample`
+#include? "CodeSigning.xcconfig"
+
+ORG_PREFIX = $(ORG_IDENTIFIER)
+
+PRODUCT_NAME = JITTestApp
+
+BASE_BUNDLE_ID                                  = $(ORG_IDENTIFIER).$(PRODUCT_NAME)
+PRODUCT_BUNDLE_IDENTIFIER[config=Debug]         = $(BASE_BUNDLE_ID).$(DEVELOPMENT_TEAM)
+PRODUCT_BUNDLE_IDENTIFIER[config=Release]       = $(BASE_BUNDLE_ID)
+APP_GROUP_IDENTIFIER                            = $(PRODUCT_BUNDLE_IDENTIFIER)
+ICLOUD_CONTAINER_IDENTIFIER                     = iCloud.$(ORG_IDENTIFIER).$(PROJECT_NAME)
+
+// Suppress noise from os activity in xcode console log for release builds
+DEBUG_ACTIVITY_MODE = disable
+
+// Mute warnings about duplicate classes in AuthKit and AuthUIKit
+DEBUG_DUPLICATE_CLASSES = NO

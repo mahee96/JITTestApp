@@ -1,0 +1,259 @@
+name: Build & Package IPA
+
+on:
+  push:
+    branches: [main]
+    tags: ["*"]
+    paths-ignore:
+      - "**.md"
+      - "LICENSE"
+      - ".gitignore"
+      - "**.sample"
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    branches: [main]
+    paths-ignore:
+      - "**.md"
+      - "LICENSE"
+      - ".gitignore"
+      - "**.sample"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build IPA
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+    runs-on: macos-26
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine Version & Packaging Details
+        id: versioning
+        run: |
+          BASE_VERSION=$(grep 'MARKETING_VERSION =' Build.xcconfig | head -n1 | awk '{print $3}')
+          if [ -z "$BASE_VERSION" ]; then
+            BASE_VERSION="1.0.0"
+          fi
+
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            # PR build -> Unique version for nightly.link artifact
+            SHORT_SHA=$(git rev-parse --short ${{ github.event.pull_request.head.sha }})
+            NORMALIZED_VERSION="${BASE_VERSION}-pr.${{ github.event.pull_request.number }}+${SHORT_SHA}"
+            sed -i "" "s/MARKETING_VERSION = .*/MARKETING_VERSION = ${NORMALIZED_VERSION}/" Build.xcconfig
+            IPA_NAME="JITTestApp-${NORMALIZED_VERSION}.ipa"
+            IS_RELEASE="false"
+            RELEASE_TAG=""
+            RELEASE_TITLE=""
+            IS_PRERELEASE="false"
+          elif [ "${{ github.ref_type }}" = "tag" ]; then
+            TAG_NAME="${{ github.ref_name }}"
+            IPA_NAME="JITTestApp-${TAG_NAME}.ipa"
+            IS_RELEASE="true"
+            RELEASE_TAG="${TAG_NAME}"
+            if [[ "$TAG_NAME" =~ ^v ]]; then
+              RELEASE_TITLE="${TAG_NAME}"
+            else
+              RELEASE_TITLE="v${TAG_NAME}"
+            fi
+            IS_PRERELEASE="false"
+          elif [ "${{ github.ref_name }}" = "main" ]; then
+            # Push to main -> Nightly Release
+            SHORT_SHA=$(git rev-parse --short HEAD)
+            FULL_SHA="${{ github.sha }}"
+            TIMESTAMP=$(date -u "+%Y%m%dT%H%M%S")
+            NORMALIZED_VERSION="${BASE_VERSION}-nightly.${TIMESTAMP}+${SHORT_SHA}"
+            sed -i "" "s/MARKETING_VERSION = .*/MARKETING_VERSION = ${NORMALIZED_VERSION}/" Build.xcconfig
+            IPA_NAME="JITTestApp.ipa"
+            IS_RELEASE="true"
+            RELEASE_TAG="nightly"
+            RELEASE_TITLE="Nightly"
+            IS_PRERELEASE="true"
+
+            UTC_TIME=$(date -u "+%a %b %d %H:%M:%S %Y")
+            UTC_DATE=$(date -u "+%Y-%m-%d")
+
+            printf "## Build Info\n\nBuilt at (UTC): \`%s\`\nBuilt at (UTC date): \`%s\`\nCommit SHA: \`%s\`\nVersion: \`%s\`\n" \
+              "${UTC_TIME}" "${UTC_DATE}" "${FULL_SHA}" "${NORMALIZED_VERSION}" > release_notes.md
+          else
+            # Other branch pushes -> Build & artifact only (no GitHub Release)
+            SAFE_BRANCH=$(echo "${{ github.ref_name }}" | tr "/" "-")
+            SHORT_SHA=$(git rev-parse --short HEAD)
+            NORMALIZED_VERSION="${BASE_VERSION}-${SAFE_BRANCH}+${SHORT_SHA}"
+            sed -i "" "s/MARKETING_VERSION = .*/MARKETING_VERSION = ${NORMALIZED_VERSION}/" Build.xcconfig
+            IPA_NAME="JITTestApp-${SAFE_BRANCH}.ipa"
+            IS_RELEASE="false"
+            RELEASE_TAG=""
+            RELEASE_TITLE=""
+            IS_PRERELEASE="false"
+          fi
+
+          echo "IPA_NAME=${IPA_NAME}" >> $GITHUB_ENV
+          echo "NORMALIZED_VERSION=${NORMALIZED_VERSION}" >> $GITHUB_ENV
+          echo "IS_RELEASE=${IS_RELEASE}" >> $GITHUB_ENV
+          echo "RELEASE_TAG=${RELEASE_TAG}" >> $GITHUB_ENV
+          echo "RELEASE_TITLE=${RELEASE_TITLE}" >> $GITHUB_ENV
+          echo "IS_PRERELEASE=${IS_PRERELEASE}" >> $GITHUB_ENV
+
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1.6.0
+        with:
+          xcode-version: "26.4"
+
+      - name: Install Tools
+        run: brew install ldid xcbeautify
+
+      - name: Restore Cache (exact)
+        id: xcode-cache-exact
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/Library/Developer/Xcode/DerivedData
+            ~/Library/Caches/org.swift.swiftpm
+          key: xcode-build-cache-${{ github.ref_name }}-${{ github.sha }}
+
+      - name: Restore Cache (fallback)
+        if: steps.xcode-cache-exact.outputs.cache-hit != 'true'
+        id: xcode-cache-fallback
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/Library/Developer/Xcode/DerivedData
+            ~/Library/Caches/org.swift.swiftpm
+          key: xcode-build-cache-${{ github.ref_name }}-
+
+      - name: Build & Package IPA
+        run: |
+          ./build.sh --clean --output "${{ env.IPA_NAME }}"
+          shasum -a 256 "${{ env.IPA_NAME }}" > "${{ env.IPA_NAME }}.sha256"
+
+      - name: Save Cache
+        if: steps.xcode-cache-exact.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/Library/Developer/Xcode/DerivedData
+            ~/Library/Caches/org.swift.swiftpm
+          key: xcode-build-cache-${{ github.ref_name }}-${{ github.sha }}
+
+      - name: Upload IPA Artifact
+        id: upload-artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.IPA_NAME }}
+          path: |
+            ${{ env.IPA_NAME }}
+            ${{ env.IPA_NAME }}.sha256
+          if-no-files-found: error
+
+      - name: Post or Update PR Comment
+        if: ${{ github.event_name == 'pull_request' }}
+        uses: actions/github-script@v7
+        env:
+          IPA_NAME: ${{ env.IPA_NAME }}
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            async function upsertComment(owner, repo, issue_number, purpose, body) {
+              const { data: comments } = await github.rest.issues.listComments({
+                owner,
+                repo,
+                issue_number,
+              });
+
+              const marker = `<!-- bot: ${purpose} -->`;
+              body = marker + "\n" + body;
+
+              const existing = comments.filter((c) => c.body.includes(marker));
+              if (existing.length > 0) {
+                const last = existing[existing.length - 1];
+                core.info(`Updating comment ${last.id}`);
+                await github.rest.issues.updateComment({
+                  owner,
+                  repo,
+                  body,
+                  comment_id: last.id,
+                });
+              } else {
+                core.info(`Creating comment on PR #${issue_number}`);
+                await github.rest.issues.createComment({
+                  issue_number,
+                  body,
+                  owner,
+                  repo,
+                });
+              }
+            }
+
+            const { owner, repo } = context.repo;
+            const prNumber = context.issue.number;
+            const ipaName = process.env.IPA_NAME;
+            const artifactId = "${{ steps.upload-artifact.outputs.artifact-id }}";
+
+            let body = `Download the artifact for this pull request (nightly.link):\n`;
+            if (artifactId) {
+              body += `\n* [${ipaName}.zip](https://nightly.link/${owner}/${repo}/actions/artifacts/${artifactId}.zip)`;
+            } else {
+              const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+              body += `\n* [${ipaName}](${runUrl})`;
+            }
+
+            await upsertComment(owner, repo, prNumber, "pr_artifact_link", body);
+
+      - name: Prune Old Nightly Release Assets (Keep Latest Only)
+        if: ${{ env.IS_RELEASE == 'true' && env.RELEASE_TAG == 'nightly' }}
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const { owner, repo } = context.repo;
+            try {
+              const { data: release } = await github.rest.repos.getReleaseByTag({
+                owner,
+                repo,
+                tag: "nightly"
+              });
+
+              for (const asset of release.assets) {
+                core.info(`Deleting previous nightly asset: ${asset.name} (id: ${asset.id})`);
+                await github.rest.repos.deleteReleaseAsset({
+                  owner,
+                  repo,
+                  asset_id: asset.id
+                });
+              }
+            } catch (error) {
+              if (error.status === 404) {
+                core.info("Nightly release does not exist yet; skipping asset prune.");
+              } else {
+                core.warning(`Failed to clean up old nightly assets: ${error.message}`);
+              }
+            }
+
+      - name: Create or Update GitHub Release
+        if: ${{ env.IS_RELEASE == 'true' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: ${{ env.RELEASE_TITLE }}
+          body_path: release_notes.md
+          target_commitish: ${{ github.sha }}
+          files: |
+            ${{ env.IPA_NAME }}
+            ${{ env.IPA_NAME }}.sha256
+          prerelease: ${{ env.IS_PRERELEASE == 'true' }}
+          generate_release_notes: ${{ env.RELEASE_TAG != 'nightly' }}
+          make_latest: ${{ env.RELEASE_TAG != 'nightly' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

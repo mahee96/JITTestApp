@@ -1,0 +1,17 @@
+// Your Team ID. 
+// If you have a paid Apple Developer account, you can find your Team ID at 
+// https://developer.apple.com/account/#/membership
+DEVELOPMENT_TEAM = 
+
+// Prefix of unique bundle IDs registered to you in Apple Developer Portal.
+ORG_IDENTIFIER = 
+
+// Signing style: Manual or Automatic
+CODE_SIGN_STYLE = Automatic
+
+// For Automatic signing, leave PROVISIONING_PROFILE_SPECIFIER empty.
+// If using Manual signing, specify the name or UUID of the provisioning profile:
+// PROVISIONING_PROFILE_SPECIFIER =
+
+// Automatic signing lets Xcode select the appropriate development certificate.
+// Set CODE_SIGN_IDENTITY only when using manual signing.
