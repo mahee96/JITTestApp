@@ -92,6 +92,27 @@ public struct JITChecker {
         let isDebugged = (csResult == 0) && ((csFlags & CS_DEBUGGED) != 0)
         print("CS_OPS: result=\(csResult), flags=0x\(String(csFlags, radix: 16, uppercase: true)), CS_DEBUGGED=\(isDebugged)")
 
+        if !isDebugged {
+            let elapsed = (CFAbsoluteTimeGetCurrent() - startTime) * 1000.0
+            print("CS_DEBUGGED is false. Skipping memory execution strategies to prevent AMFI SIGKILL.")
+            print("JIT CHECK FINISHED: passed=false, time=\(String(format: "%.2f", elapsed))ms")
+            print("=========================================================")
+            return JITDiagnostics(
+                isJITActive: false,
+                isCsDebugged: false,
+                csopsReturnCode: csResult,
+                mmapSuccess: false,
+                mprotectSuccess: false,
+                executionSuccess: false,
+                magicReturnValue: nil,
+                processId: currentPid,
+                processName: procName,
+                executionDurationMs: elapsed,
+                activeStrategy: nil,
+                errorMessage: "Process has CS_DEBUGGED=false. Enable JIT first via SideStore."
+            )
+        }
+
         let pageSize = vm_size_t(sysconf(_SC_PAGESIZE))
         let isAPRRSupported = pthreadJitWriteProtectSupported()
         typealias JITFunction = @convention(c) () -> Int

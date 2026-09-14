@@ -7,11 +7,44 @@
 //
 
 import SwiftUI
+import CoreLocation
+
+final class BackgroundLocationManager: NSObject, CLLocationManagerDelegate {
+    static let shared = BackgroundLocationManager()
+    private let manager = CLLocationManager()
+
+    override private init() {
+        super.init()
+        manager.delegate = self
+        // Lowest possible power: coarse location based on cell tower
+        // GPS isn't used
+        manager.desiredAccuracy = kCLLocationAccuracyThreeKilometers
+        manager.distanceFilter = 999999
+        manager.allowsBackgroundLocationUpdates = true
+        manager.pausesLocationUpdatesAutomatically = false
+        manager.showsBackgroundLocationIndicator = false
+    }
+
+    func start() {
+        manager.requestWhenInUseAuthorization()
+        manager.startUpdatingLocation()
+    }
+
+    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        // Discard all coordinates; service existence alone keeps process execution alive
+    }
+
+    func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        // No-op
+    }
+}
 
 struct ContentView: View {
+    @Environment(\.scenePhase) private var scenePhase
     @State private var diagnostics: JITDiagnostics?
     @State private var isRunningCheck = false
     @State private var copiedToClipboard = false
+    @State private var backgroundTaskId: UIBackgroundTaskIdentifier = .invalid
 
     var body: some View {
         NavigationView {
@@ -31,7 +64,29 @@ struct ContentView: View {
             .navigationTitle("JIT Status Test")
             .navigationBarTitleDisplayMode(.inline)
             .onAppear {
+                BackgroundLocationManager.shared.start()
                 runCheck()
+            }
+            .onChange(of: scenePhase) { newPhase in
+                switch newPhase {
+                case .background:
+                    if backgroundTaskId == .invalid {
+                        backgroundTaskId = UIApplication.shared.beginBackgroundTask(withName: "JITWait") {
+                            if self.backgroundTaskId != .invalid {
+                                UIApplication.shared.endBackgroundTask(self.backgroundTaskId)
+                                self.backgroundTaskId = .invalid
+                            }
+                        }
+                    }
+                case .active:
+                    if backgroundTaskId != .invalid {
+                        UIApplication.shared.endBackgroundTask(backgroundTaskId)
+                        backgroundTaskId = .invalid
+                    }
+                    runCheck()
+                default:
+                    break
+                }
             }
         }
     }
