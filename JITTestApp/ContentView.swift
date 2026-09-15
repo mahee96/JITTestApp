@@ -7,63 +7,90 @@
 //
 
 import SwiftUI
-import CoreLocation
+import AVFoundation
 
-final class BackgroundLocationManager: NSObject, CLLocationManagerDelegate {
-    static let shared = BackgroundLocationManager()
-    private let manager = CLLocationManager()
-    private var isRunning = false
+final class BackgroundAudioManager: NSObject, @unchecked Sendable {
+    static let shared = BackgroundAudioManager()
+    private var player: AVAudioPlayer?
+    private var isConfigured = false
 
     override private init() {
         super.init()
-        manager.delegate = self
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleInterruption),
+            name: AVAudioSession.interruptionNotification,
+            object: nil
+        )
     }
 
     func start() {
-        let status = manager.authorizationStatus
-        if status == .notDetermined {
-            manager.requestAlwaysAuthorization()
-        } else if status == .authorizedWhenInUse {
-            manager.requestAlwaysAuthorization()
-            runLocationService()
-        } else if status == .authorizedAlways {
-            runLocationService()
+        do {
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
+            try session.setActive(true)
+
+            if player == nil {
+                let silentData = Self.generateSilentWAV()
+                player = try AVAudioPlayer(data: silentData)
+                player?.numberOfLoops = -1
+                player?.volume = 0.01
+                player?.prepareToPlay()
+            }
+            player?.play()
+            isConfigured = true
+        } catch {
+            print("BackgroundAudioManager start failed: \(error)")
         }
-    }
-
-    private func runLocationService() {
-        guard !isRunning else { return }
-        let status = manager.authorizationStatus
-        guard status == .authorizedAlways || status == .authorizedWhenInUse else { return }
-
-        manager.desiredAccuracy = kCLLocationAccuracyThreeKilometers
-        manager.distanceFilter = 4
-        manager.allowsBackgroundLocationUpdates = true
-        manager.pausesLocationUpdatesAutomatically = false
-        manager.showsBackgroundLocationIndicator = false
-        manager.startUpdatingLocation()
-        isRunning = true
     }
 
     func stop() {
-        manager.stopUpdatingLocation()
-        isRunning = false
+        player?.stop()
+        isConfigured = false
     }
 
-    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
-        let status = manager.authorizationStatus
-        guard status != .notDetermined else { return }
-        if status == .authorizedAlways || status == .authorizedWhenInUse {
-            runLocationService()
+    @objc private func handleInterruption(notification: Notification) {
+        guard let userInfo = notification.userInfo,
+              let typeValue = userInfo[AVAudioSessionInterruptionTypeKey] as? UInt,
+              let type = AVAudioSession.InterruptionType(rawValue: typeValue) else {
+            return
+        }
+        if type == .ended {
+            do {
+                try AVAudioSession.sharedInstance().setActive(true)
+                player?.play()
+            } catch {
+                print("Failed to reactivate audio session: \(error)")
+            }
         }
     }
 
-    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
-        // Coarse location updates keep process active; coordinates discarded
-    }
+    private static func generateSilentWAV() -> Data {
+        let sampleRate: UInt32 = 8000
+        let numChannels: UInt16 = 1
+        let bitsPerSample: UInt16 = 16
+        let numSamples: UInt32 = 8000
+        let dataSize: UInt32 = numSamples * UInt32(numChannels) * UInt32(bitsPerSample / 8)
+        let chunkSize: UInt32 = 36 + dataSize
+        let byteRate: UInt32 = sampleRate * UInt32(numChannels) * UInt32(bitsPerSample / 8)
+        let blockAlign: UInt16 = numChannels * (bitsPerSample / 8)
 
-    func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
-        // No-op
+        var data = Data()
+        data.append(contentsOf: "RIFF".utf8)
+        withUnsafeBytes(of: chunkSize.littleEndian) { data.append(contentsOf: $0) }
+        data.append(contentsOf: "WAVE".utf8)
+        data.append(contentsOf: "fmt ".utf8)
+        withUnsafeBytes(of: UInt32(16).littleEndian) { data.append(contentsOf: $0) }
+        withUnsafeBytes(of: UInt16(1).littleEndian) { data.append(contentsOf: $0) }
+        withUnsafeBytes(of: numChannels.littleEndian) { data.append(contentsOf: $0) }
+        withUnsafeBytes(of: sampleRate.littleEndian) { data.append(contentsOf: $0) }
+        withUnsafeBytes(of: byteRate.littleEndian) { data.append(contentsOf: $0) }
+        withUnsafeBytes(of: blockAlign.littleEndian) { data.append(contentsOf: $0) }
+        withUnsafeBytes(of: bitsPerSample.littleEndian) { data.append(contentsOf: $0) }
+        data.append(contentsOf: "data".utf8)
+        withUnsafeBytes(of: dataSize.littleEndian) { data.append(contentsOf: $0) }
+        data.append(Data(repeating: 0, count: Int(dataSize)))
+        return data
     }
 }
 
@@ -92,12 +119,13 @@ struct ContentView: View {
             .navigationTitle("JIT Status Test")
             .navigationBarTitleDisplayMode(.inline)
             .onAppear {
-                BackgroundLocationManager.shared.start()
+                BackgroundAudioManager.shared.start()
                 runCheck()
             }
             .onChange(of: scenePhase) { newPhase in
                 switch newPhase {
                 case .background:
+                    BackgroundAudioManager.shared.start()
                     if backgroundTaskId == .invalid {
                         backgroundTaskId = UIApplication.shared.beginBackgroundTask(withName: "JITWait") {
                             if self.backgroundTaskId != .invalid {
